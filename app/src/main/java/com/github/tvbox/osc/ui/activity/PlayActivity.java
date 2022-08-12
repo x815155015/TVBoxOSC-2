@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -154,15 +155,22 @@ public class PlayActivity extends BaseActivity {
         mController.setListener(new VodController.VodControlListener() {
             @Override
             public void playNext(boolean rmProgress) {
-                String preProgressKey = progressKey;
-                PlayActivity.this.playNext();
-                if (rmProgress && preProgressKey != null)
-                    CacheManager.delete(MD5.string2MD5(preProgressKey), 0);
+                if (mVodInfo.reverseSort) {
+                    PlayActivity.this.playPrevious();
+                } else {
+                    String preProgressKey = progressKey;
+                    PlayActivity.this.playNext();
+                    if (rmProgress && preProgressKey != null) CacheManager.delete(MD5.string2MD5(preProgressKey), 0);
+                }
             }
 
             @Override
             public void playPre() {
-                PlayActivity.this.playPrevious();
+                if (mVodInfo.reverseSort) {
+                    PlayActivity.this.playNext();
+                } else {
+                    PlayActivity.this.playPrevious();
+                }
             }
 
             @Override
@@ -178,9 +186,9 @@ public class PlayActivity extends BaseActivity {
             }
 
             @Override
-            public void replay(boolean replay) {
+            public void replay() {
                 autoRetryCount = 0;
-                play(replay);
+                play();
             }
 
             @Override
@@ -192,15 +200,10 @@ public class PlayActivity extends BaseActivity {
     }
 
     void setTip(String msg, boolean loading, boolean err) {
-        runOnUiThread(new Runnable() {//影魔 解决解析偶发闪退
-            @Override
-            public void run() {
-                mPlayLoadTip.setText(msg);
-                mPlayLoadTip.setVisibility(View.VISIBLE);
-                mPlayLoading.setVisibility(loading ? View.VISIBLE : View.GONE);
-                mPlayLoadErr.setVisibility(err ? View.VISIBLE : View.GONE);
-            }
-        });
+        mPlayLoadTip.setText(msg);
+        mPlayLoadTip.setVisibility(View.VISIBLE);
+        mPlayLoading.setVisibility(loading ? View.VISIBLE : View.GONE);
+        mPlayLoadErr.setVisibility(err ? View.VISIBLE : View.GONE);
     }
 
     void hideTip() {
@@ -310,7 +313,7 @@ public class PlayActivity extends BaseActivity {
                             playUrl(playUrl + url, headers);
                         }
                     } catch (Throwable th) {
-//                        errorWithRetry("获取播放信息错误", true);
+                        errorWithRetry("获取播放信息错误", true);
                     }
                 } else {
                     errorWithRetry("获取播放信息错误", true);
@@ -327,7 +330,7 @@ public class PlayActivity extends BaseActivity {
             sourceKey = bundle.getString("sourceKey");
             sourceBean = ApiConfig.get().getSource(sourceKey);
             initPlayerCfg();
-            play(false);
+            play();
         }
     }
 
@@ -428,7 +431,7 @@ public class PlayActivity extends BaseActivity {
             return;
         }
         mVodInfo.playIndex++;
-        play(false);
+        play();
     }
 
     private void playPrevious() {
@@ -443,15 +446,15 @@ public class PlayActivity extends BaseActivity {
             return;
         }
         mVodInfo.playIndex--;
-        play(false);
+        play();
     }
 
     private int autoRetryCount = 0;
 
     boolean autoRetry() {
-        if (autoRetryCount < 2) {
-            play(false);
+        if (autoRetryCount < 3) {
             autoRetryCount++;
+            play();
             return true;
         } else {
             autoRetryCount = 0;
@@ -459,7 +462,7 @@ public class PlayActivity extends BaseActivity {
         }
     }
 
-    public void play(boolean reset) {
+    public void play() {
         VodInfo.VodSeries vs = mVodInfo.seriesMap.get(mVodInfo.playFlag).get(mVodInfo.playIndex);
         EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_REFRESH, mVodInfo.playIndex));
         setTip("正在获取播放信息", true, false);
@@ -468,10 +471,6 @@ public class PlayActivity extends BaseActivity {
 
         playUrl(null, null);
         String progressKey = mVodInfo.sourceKey + mVodInfo.id + mVodInfo.playFlag + mVodInfo.playIndex;
-        //存储播放进度
-        Object bodyKey=CacheManager.getCache(MD5.string2MD5(progressKey));
-        //重新播放清除现有进度
-        if (reset) {CacheManager.delete(MD5.string2MD5(progressKey), 0);}
         if (Thunder.play(vs.url, new Thunder.ThunderCallback() {
             @Override
             public void status(int code, String info) {
@@ -495,8 +494,6 @@ public class PlayActivity extends BaseActivity {
             return;
         }
         sourceViewModel.getPlay(sourceKey, mVodInfo.playFlag, progressKey, vs.url);
-        //执行重新播放后还原之前的进度
-//        if (reset) CacheManager.save(MD5.string2MD5(progressKey),bodyKey);
     }
 
     private String playSubtitle;
@@ -537,15 +534,10 @@ public class PlayActivity extends BaseActivity {
 
     JSONObject jsonParse(String input, String json) throws JSONException {
         JSONObject jsonPlayData = new JSONObject(json);
-        String url;
-        if (jsonPlayData.has("data")) {
-            url = jsonPlayData.getJSONObject("data").getString("url");
-        } else {
-            url = jsonPlayData.getString("url");
-        }
+        String url = jsonPlayData.getString("url");
         String msg = jsonPlayData.optString("msg", "");
         if (url.startsWith("//")) {
-            url = "http:" + url;
+            url = "https:" + url;
         }
         if (!url.startsWith("http")) {
             return null;
@@ -643,7 +635,7 @@ public class PlayActivity extends BaseActivity {
                                 playUrl(rs.getString("url"), headers);
                             } catch (Throwable e) {
                                 e.printStackTrace();
-//                                errorWithRetry("解析错误", false);
+                                errorWithRetry("解析错误", false);
                             }
                         }
 
