@@ -1,14 +1,16 @@
-package com.github.tvbox.osc.ui.fragment;
+package com.github.tvbox.osc.ui.activity;
 
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
 import android.net.http.SslError;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -36,7 +38,7 @@ import androidx.lifecycle.ViewModelProvider;
 import com.github.catvod.crawler.Spider;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.api.ApiConfig;
-import com.github.tvbox.osc.base.BaseLazyFragment;
+import com.github.tvbox.osc.base.BaseActivity;
 import com.github.tvbox.osc.bean.ParseBean;
 import com.github.tvbox.osc.bean.SourceBean;
 import com.github.tvbox.osc.bean.VodInfo;
@@ -83,7 +85,7 @@ import me.jessyan.autosize.AutoSize;
 import xyz.doikki.videoplayer.player.ProgressManager;
 import xyz.doikki.videoplayer.player.VideoView;
 
-public class PlayFragment extends BaseLazyFragment {
+public class PlayActivity extends BaseActivity {
     private VideoView mVideoView;
     private TextView mPlayLoadTip;
     private ImageView mPlayLoadErr;
@@ -121,7 +123,7 @@ public class PlayFragment extends BaseLazyFragment {
         mPlayLoadTip = findViewById(R.id.play_load_tip);
         mPlayLoading = findViewById(R.id.play_loading);
         mPlayLoadErr = findViewById(R.id.play_load_error);
-        mController = new VodController(requireContext());
+        mController = new VodController(this);
         mController.setCanChangePosition(true);
         mController.setEnableInNormal(true);
         mController.setGestureEnabled(true);
@@ -153,15 +155,22 @@ public class PlayFragment extends BaseLazyFragment {
         mController.setListener(new VodController.VodControlListener() {
             @Override
             public void playNext(boolean rmProgress) {
-                String preProgressKey = progressKey;
-                PlayFragment.this.playNext();
-                if (rmProgress && preProgressKey != null)
-                    CacheManager.delete(MD5.string2MD5(preProgressKey), 0);
+                if (mVodInfo.reverseSort) {
+                    PlayActivity.this.playPrevious();
+                } else {
+                    String preProgressKey = progressKey;
+                    PlayActivity.this.playNext();
+                    if (rmProgress && preProgressKey != null) CacheManager.delete(MD5.string2MD5(preProgressKey), 0);
+                }
             }
 
             @Override
             public void playPre() {
-                PlayFragment.this.playPrevious();
+                if (mVodInfo.reverseSort) {
+                    PlayActivity.this.playNext();
+                } else {
+                    PlayActivity.this.playPrevious();
+                }
             }
 
             @Override
@@ -177,9 +186,9 @@ public class PlayFragment extends BaseLazyFragment {
             }
 
             @Override
-            public void replay(boolean replay) {
+            public void replay() {
                 autoRetryCount = 0;
-                play(replay);
+                play();
             }
 
             @Override
@@ -191,15 +200,10 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     void setTip(String msg, boolean loading, boolean err) {
-        requireActivity().runOnUiThread(new Runnable() { //影魔
-            @Override
-            public void run() {
-                mPlayLoadTip.setText(msg);
-                mPlayLoadTip.setVisibility(View.VISIBLE);
-                mPlayLoading.setVisibility(loading ? View.VISIBLE : View.GONE);
-                mPlayLoadErr.setVisibility(err ? View.VISIBLE : View.GONE);
-            }
-        });
+        mPlayLoadTip.setText(msg);
+        mPlayLoadTip.setVisibility(View.VISIBLE);
+        mPlayLoading.setVisibility(loading ? View.VISIBLE : View.GONE);
+        mPlayLoadErr.setVisibility(err ? View.VISIBLE : View.GONE);
     }
 
     void hideTip() {
@@ -210,11 +214,12 @@ public class PlayFragment extends BaseLazyFragment {
 
     void errorWithRetry(String err, boolean finish) {
         if (!autoRetry()) {
-            requireActivity().runOnUiThread(new Runnable() {
+            runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
                     if (finish) {
                         Toast.makeText(mContext, err, Toast.LENGTH_SHORT).show();
+                        finish();
                     } else {
                         setTip(err, false, true);
                     }
@@ -224,7 +229,7 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     void playUrl(String url, HashMap<String, String> headers) {
-        requireActivity().runOnUiThread(new Runnable() {
+        runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 stopParse();
@@ -240,11 +245,11 @@ public class PlayFragment extends BaseLazyFragment {
                                 boolean callResult = false;
                                 switch (playerType) {
                                     case 10: {
-                                        callResult = MXPlayer.run(requireActivity(), url, playTitle, playSubtitle, headers);
+                                        callResult = MXPlayer.run(PlayActivity.this, url, playTitle, playSubtitle, headers);
                                         break;
                                     }
                                     case 11: {
-                                        callResult = ReexPlayer.run(requireActivity(), url, playTitle, playSubtitle, headers);
+                                        callResult = ReexPlayer.run(PlayActivity.this, url, playTitle, playSubtitle, headers);
                                         break;
                                     }
                                 }
@@ -308,7 +313,7 @@ public class PlayFragment extends BaseLazyFragment {
                             playUrl(playUrl + url, headers);
                         }
                     } catch (Throwable th) {
-//                        errorWithRetry("获取播放信息错误", true);
+                        errorWithRetry("获取播放信息错误", true);
                     }
                 } else {
                     errorWithRetry("获取播放信息错误", true);
@@ -317,19 +322,16 @@ public class PlayFragment extends BaseLazyFragment {
         });
     }
 
-    public void setData(Bundle bundle) {
-        mVodInfo = (VodInfo) bundle.getSerializable("VodInfo");
-        sourceKey = bundle.getString("sourceKey");
-        sourceBean = ApiConfig.get().getSource(sourceKey);
-        initPlayerCfg();
-        play(false);
-    }
-
     private void initData() {
-        /*Intent intent = getIntent();
+        Intent intent = getIntent();
         if (intent != null && intent.getExtras() != null) {
-
-        }*/
+            Bundle bundle = intent.getExtras();
+            mVodInfo = (VodInfo) bundle.getSerializable("VodInfo");
+            sourceKey = bundle.getString("sourceKey");
+            sourceBean = ApiConfig.get().getSource(sourceKey);
+            initPlayerCfg();
+            play();
+        }
     }
 
     void initPlayerCfg() {
@@ -366,24 +368,35 @@ public class PlayFragment extends BaseLazyFragment {
         mController.setPlayerConfig(mVodPlayerCfg);
     }
 
-    public boolean onBackPressed() {
+    @Override
+    public void onBackPressed() {
         if (mController.onBackPressed()) {
-            return true;
+            return;
         }
-        return false;
+        super.onBackPressed();
     }
 
+    @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (event != null) {
             if (mController.onKeyEvent(event)) {
                 return true;
             }
         }
-        return false;
+        return super.dispatchKeyEvent(event);
     }
 
     @Override
-    public void onPause() {
+    protected void onResume() {
+        super.onResume();
+        if (mVideoView != null) {
+            mVideoView.resume();
+        }
+    }
+
+
+    @Override
+    protected void onPause() {
         super.onPause();
         if (mVideoView != null) {
             mVideoView.pause();
@@ -391,30 +404,8 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     @Override
-    public void onResume() {
-        super.onResume();
-        if (mVideoView != null) {
-            mVideoView.resume();
-        }
-    }
-
-    @Override
-    public void onHiddenChanged(boolean hidden) {
-        if (hidden) {
-            if (mVideoView != null) {
-                mVideoView.pause();
-            }
-        } else {
-            if (mVideoView != null) {
-                mVideoView.resume();
-            }
-        }
-        super.onHiddenChanged(hidden);
-    }
-
-    @Override
-    public void onDestroyView() {
-        super.onDestroyView();
+    protected void onDestroy() {
+        super.onDestroy();
         if (mVideoView != null) {
             mVideoView.release();
             mVideoView = null;
@@ -436,11 +427,11 @@ public class PlayFragment extends BaseLazyFragment {
             hasNext = mVodInfo.playIndex + 1 < mVodInfo.seriesMap.get(mVodInfo.playFlag).size();
         }
         if (!hasNext) {
-            Toast.makeText(requireContext(), "已经是最后一集了!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "已经是最后一集了!", Toast.LENGTH_SHORT).show();
             return;
         }
         mVodInfo.playIndex++;
-        play(false);
+        play();
     }
 
     private void playPrevious() {
@@ -451,19 +442,19 @@ public class PlayFragment extends BaseLazyFragment {
             hasPre = mVodInfo.playIndex - 1 >= 0;
         }
         if (!hasPre) {
-            Toast.makeText(requireContext(), "已经是第一集了!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "已经是第一集了!", Toast.LENGTH_SHORT).show();
             return;
         }
         mVodInfo.playIndex--;
-        play(false);
+        play();
     }
 
     private int autoRetryCount = 0;
 
     boolean autoRetry() {
-        if (autoRetryCount < 2) {
-            play(false);
+        if (autoRetryCount < 3) {
             autoRetryCount++;
+            play();
             return true;
         } else {
             autoRetryCount = 0;
@@ -471,7 +462,7 @@ public class PlayFragment extends BaseLazyFragment {
         }
     }
 
-    public void play(boolean reset) {
+    public void play() {
         VodInfo.VodSeries vs = mVodInfo.seriesMap.get(mVodInfo.playFlag).get(mVodInfo.playIndex);
         EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_REFRESH, mVodInfo.playIndex));
         setTip("正在获取播放信息", true, false);
@@ -480,10 +471,6 @@ public class PlayFragment extends BaseLazyFragment {
 
         playUrl(null, null);
         String progressKey = mVodInfo.sourceKey + mVodInfo.id + mVodInfo.playFlag + mVodInfo.playIndex;
-        //存储播放进度
-        Object bodyKey=CacheManager.getCache(MD5.string2MD5(progressKey));
-        //重新播放清除现有进度
-        if (reset) CacheManager.delete(MD5.string2MD5(progressKey), 0);
         if (Thunder.play(vs.url, new Thunder.ThunderCallback() {
             @Override
             public void status(int code, String info) {
@@ -507,8 +494,6 @@ public class PlayFragment extends BaseLazyFragment {
             return;
         }
         sourceViewModel.getPlay(sourceKey, mVodInfo.playFlag, progressKey, vs.url);
-        //执行重新播放后还原之前的进度
-//        if (reset) CacheManager.save(MD5.string2MD5(progressKey),bodyKey);
     }
 
     private String playSubtitle;
@@ -549,16 +534,10 @@ public class PlayFragment extends BaseLazyFragment {
 
     JSONObject jsonParse(String input, String json) throws JSONException {
         JSONObject jsonPlayData = new JSONObject(json);
-        //小窗版解析方法改到这了  之前那个位置data解析无效
-        String url;
-        if (jsonPlayData.has("data")) {
-            url = jsonPlayData.getJSONObject("data").getString("url");
-        } else {
-            url = jsonPlayData.getString("url");
-        }
+        String url = jsonPlayData.getString("url");
         String msg = jsonPlayData.optString("msg", "");
         if (url.startsWith("//")) {
-            url = "http:" + url;
+            url = "https:" + url;
         }
         if (!url.startsWith("http")) {
             return null;
@@ -656,7 +635,7 @@ public class PlayFragment extends BaseLazyFragment {
                                 playUrl(rs.getString("url"), headers);
                             } catch (Throwable e) {
                                 e.printStackTrace();
-//                                errorWithRetry("解析错误", false);
+                                errorWithRetry("解析错误", false);
                             }
                         }
 
@@ -699,7 +678,7 @@ public class PlayFragment extends BaseLazyFragment {
                             }
                         }
                         if (rs.has("jxFrom")) {
-                            requireActivity().runOnUiThread(new Runnable() {
+                            runOnUiThread(new Runnable() {
                                 @Override
                                 public void run() {
                                     Toast.makeText(mContext, "解析来自:" + rs.optString("jxFrom"), Toast.LENGTH_SHORT).show();
@@ -740,7 +719,7 @@ public class PlayFragment extends BaseLazyFragment {
                         errorWithRetry("解析错误", false);
                     } else {
                         if (rs.has("parse") && rs.optInt("parse", 0) == 1) {
-                            requireActivity().runOnUiThread(new Runnable() {
+                            runOnUiThread(new Runnable() {
                                 @Override
                                 public void run() {
                                     String mixParseUrl = DefaultConfig.checkReplaceProxy(rs.optString("url", ""));
@@ -769,7 +748,7 @@ public class PlayFragment extends BaseLazyFragment {
                                 }
                             }
                             if (rs.has("jxFrom")) {
-                                requireActivity().runOnUiThread(new Runnable() {
+                                runOnUiThread(new Runnable() {
                                     @Override
                                     public void run() {
                                         Toast.makeText(mContext, "解析来自:" + rs.optString("jxFrom"), Toast.LENGTH_SHORT).show();
@@ -837,7 +816,7 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     void loadUrl(String url) {
-        requireActivity().runOnUiThread(new Runnable() {
+        runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 if (mXwalkWebView != null) {
@@ -855,7 +834,7 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     void stopLoadWebView(boolean destroy) {
-        requireActivity().runOnUiThread(new Runnable() {
+        runOnUiThread(new Runnable() {
             @Override
             public void run() {
 
@@ -901,7 +880,7 @@ public class PlayFragment extends BaseLazyFragment {
         public void setOverScrollMode(int mode) {
             super.setOverScrollMode(mode);
             if (mContext instanceof Activity)
-                AutoSize.autoConvertDensityOfCustomAdapt((Activity) mContext, PlayFragment.this);
+                AutoSize.autoConvertDensityOfCustomAdapt((Activity) mContext, PlayActivity.this);
         }
 
         @Override
@@ -919,7 +898,7 @@ public class PlayFragment extends BaseLazyFragment {
         public void setOverScrollMode(int mode) {
             super.setOverScrollMode(mode);
             if (mContext instanceof Activity)
-                AutoSize.autoConvertDensityOfCustomAdapt((Activity) mContext, PlayFragment.this);
+                AutoSize.autoConvertDensityOfCustomAdapt((Activity) mContext, PlayActivity.this);
         }
 
         @Override
@@ -939,7 +918,7 @@ public class PlayFragment extends BaseLazyFragment {
         webView.setFocusableInTouchMode(false);
         webView.clearFocus();
         webView.setOverScrollMode(View.OVER_SCROLL_ALWAYS);
-        requireActivity().addContentView(webView, layoutParams);
+        addContentView(webView, layoutParams);
         /* 添加webView配置 */
         final WebSettings settings = webView.getSettings();
         settings.setNeedInitialFocus(false);
@@ -1102,7 +1081,7 @@ public class PlayFragment extends BaseLazyFragment {
         webView.setFocusableInTouchMode(false);
         webView.clearFocus();
         webView.setOverScrollMode(View.OVER_SCROLL_ALWAYS);
-        requireActivity().addContentView(webView, layoutParams);
+        addContentView(webView, layoutParams);
         /* 添加webView配置 */
         final XWalkSettings settings = webView.getSettings();
         settings.setAllowContentAccess(true);
